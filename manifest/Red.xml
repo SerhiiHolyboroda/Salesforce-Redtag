@@ -50,17 +50,53 @@
         <name>RecordType</name>
     </types>
 
-    <!-- Validation Rules -->
+    <!-- Validation Rules (ALL) -->
     <types>
-        <members>*</members>
+        <members>Account.*</members>
+        <members>Opportunity.*</members>
+        <members>Case.*</members>
+        <members>Lead.*</members>
+        <members>Car__c.*</members>
+        <members>Car_Service__c.*</members>
+        <members>Car_Feature__c.*</members>
+        <members>Planned_Sales__c.*</members>
+        <members>Warranty__c.*</members>
         <name>ValidationRule</name>
     </types>
 
-    <!-- Fields (all fields for those objects) -->
+    <!-- Duplicate Rules -->
+    <types>
+        <members>*</members>
+        <name>DuplicateRule</name>
+    </types>
+
+
+
+    <!-- Matching Rules (required for Duplicate Rules) -->
+    <types>
+        <members>*</members>
+        <name>MatchingRule</name>
+    </types>
+
+    <!-- Fields -->
     <types>
         <members>*</members>
         <name>CustomField</name>
     </types>
 
-    <version>59.0</version>
+<types>
+    <members>Account</members>
+    <members>Opportunity</members>
+    <members>Case</members>
+    <members>Lead</members>
+    <members>Car__c</members>
+    <members>Car_Service__c</members>
+    <members>Car_Feature__c</members>
+    <members>Planned_Sales__c</members>
+    <members>Warranty__c</members>
+    <name>CustomObject</name>
+</types>
+      
+
+    <version>65.0</version>
 </Package>

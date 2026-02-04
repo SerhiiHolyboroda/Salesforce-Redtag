@@ -2,7 +2,6 @@
 <CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
     <fullName>Car_Feature__c</fullName>
     <deleteConstraint>SetNull</deleteConstraint>
-    <externalId>false</externalId>
     <label>Car Feature</label>
     <referenceTo>Car_Feature__c</referenceTo>
     <relationshipLabel>Car_Feature_Assignment</relationshipLabel>
