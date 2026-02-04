@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ValidationRule xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Require_full_billing_address</fullName>
+    <active>true</active>
+    <errorConditionFormula>AND(
+    ISPICKVAL(StageName, &quot;Closed Won&quot;),
+    AND(
+        ISBLANK(Account.BillingStreet),
+        ISBLANK(Account.BillingCity),
+        ISBLANK(Account.BillingState),
+        ISBLANK(Account.BillingPostalCode),
+        ISBLANK(Account.BillingCountry)
+    )
+)</errorConditionFormula>
+    <errorMessage>You cannot mark this Opportunity as Close Won.
+Please ensure the related Account has a complete billing address.</errorMessage>
+</ValidationRule>

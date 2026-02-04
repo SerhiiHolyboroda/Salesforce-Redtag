@@ -1,10 +1,14 @@
-// Use .apex files to store anonymous Apex.
-// You can execute anonymous Apex in VS Code by selecting the
-//     apex text and running the command:
-//     SFDX: Execute Anonymous Apex with Currently Selected Text
-// You can also execute the entire file by running the command:
-//     SFDX: Execute Anonymous Apex with Editor Contents
+// 1. Query the Opportunity by Id (or any filter)
+Opportunity opp = [
+    SELECT Id, Name, StageName
+    FROM Opportunity
+    WHERE Id = '006fj000008vRbZAAU'  // or WHERE Id = '006XXXXXXXXXXXX'
+    LIMIT 1
+];
 
-string tempvar = 'Enter_your_name_here';
-System.debug('Hello World!');
-System.debug('My name is ' + tempvar);
+// 2. Update the StageName (Status)
+opp.StageName = 'Prospecting';  // or any valid StageName
+update opp;
+
+// 3. Optional debug
+System.debug('Opportunity updated: ' + opp);
