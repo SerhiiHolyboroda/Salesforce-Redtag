@@ -25,12 +25,13 @@ public class OpportunityTriggerHandler {
     public void afterInsert() {
      System.debug('OpportunityTriggerHandler.afterInsert called');
       handleRelatedCars((List<Opportunity>)Trigger.new, (Map<Id, Opportunity>)null);
+      updatePlannedSales(Trigger.newMap.keySet());
     }
 
     // AFTER UPDATE
     public void afterUpdate() {
         System.debug('OpportunityTriggerHandler.afterUpdate called');
-        updatePlannedSales((List<Opportunity>)Trigger.old, (Map<Id, Opportunity>)Trigger.oldMap);
+        updatePlannedSales(Trigger.newMap.keySet());
         handleRelatedCars((List<Opportunity>)Trigger.new, (Map<Id, Opportunity>)Trigger.oldMap);
     
     }
@@ -38,7 +39,7 @@ public class OpportunityTriggerHandler {
     // AFTER DELETE
     public void afterDelete() {
         System.debug('OpportunityTriggerHandler.afterDelete called');
-        updatePlannedSales((List<Opportunity>)Trigger.old, (Map<Id, Opportunity>)Trigger.oldMap);
+        updatePlannedSales(Trigger.oldMap.keySet());
         handleRelatedCars((List<Opportunity>)Trigger.new, (Map<Id, Opportunity>)Trigger.oldMap);
     }
 
@@ -47,121 +48,65 @@ public class OpportunityTriggerHandler {
     }
     
 
-public void updatePlannedSales(List<Opportunity> opps, Map<Id, Opportunity> oldMap) {
-    if (!isActive || opps == null || opps.isEmpty()) return;
+public static void updatePlannedSales(Set<Id> oppIds) {
+
+    if (oppIds == null || oppIds.isEmpty()) return;
+
+    // 1️⃣ Aggregate Closed Won Opportunities
+ List<AggregateResult> results = [
+    SELECT
+        CALENDAR_YEAR(Opportunity.CloseDate) year,
+        CALENDAR_MONTH(Opportunity.CloseDate) month,
+        Product2.Car_Status__c carType,
+        COUNT(Id) carsSold,
+        SUM(TotalPrice) totalAmount
+    FROM OpportunityLineItem
+    WHERE OpportunityId IN (
+        SELECT Id FROM Opportunity
+        WHERE Id IN :oppIds
+        AND StageName = 'Closed Won'
+    )
+    GROUP BY
+        CALENDAR_YEAR(Opportunity.CloseDate),
+        CALENDAR_MONTH(Opportunity.CloseDate),
+        Product2.Car_Status__c
+];
 
 
-    Set<Id> relevantOppIds = new Set<Id>();
-    for (Opportunity opp : opps) {
-        String oldStage = (oldMap != null && oldMap.containsKey(opp.Id)) ? oldMap.get(opp.Id).StageName : null;
-        String newStage = opp.StageName;
-
-        if ((newStage == 'Closed Won' )) {
-            relevantOppIds.add(opp.Id);
-        }
-    }
-    if (relevantOppIds.isEmpty()) return;
-
-
-    List<OpportunityLineItem> olis = [
-        SELECT Id, OpportunityId, Product2Id, TotalPrice
-        FROM OpportunityLineItem
-        WHERE OpportunityId IN :relevantOppIds
-    ];
-    if (olis.isEmpty()) return;
-
-
-    Set<Id> productIds = new Set<Id>();
-    for (OpportunityLineItem oli : olis) productIds.add(oli.Product2Id);
-
-    Map<Id, Product2> products = new Map<Id, Product2>([
-        SELECT Id, Car_Status__c
-        FROM Product2
-        WHERE Id IN :productIds
-    ]);
-
-    Map<Id, Opportunity> oppMap = new Map<Id, Opportunity>(opps);
-
-    Map<String, PlannedSalesAccumulator> psAccMap = new Map<String, PlannedSalesAccumulator>();
-    for (OpportunityLineItem oli : olis) {
-        Opportunity opp = oppMap.get(oli.OpportunityId);
-        if (opp == null) continue;
-
-        Product2 prod = products.get(oli.Product2Id);
-        if (prod == null || prod.Car_Status__c == null) continue;
-
-        String key = opp.CloseDate.year() + '-' + opp.CloseDate.month() + '-' + prod.Car_Status__c;
-
-        if (!psAccMap.containsKey(key)) psAccMap.put(key, new PlannedSalesAccumulator());
-        PlannedSalesAccumulator acc = psAccMap.get(key);
-
-        String oldStage = (oldMap != null && oldMap.containsKey(opp.Id)) ? oldMap.get(opp.Id).StageName : null;
-        String newStage = opp.StageName;
-
-        // Adjust totals based on stage change
-        if (newStage == 'Closed Won' && oldStage != 'Closed Won') {
-            acc.CarsSold += 1;
-            acc.TotalAmount += (oli.TotalPrice != null) ? oli.TotalPrice : 0;
-        } else if (oldStage == 'Closed Won' && newStage != 'Closed Won') {
-            acc.CarsSold -= 1;
-            acc.TotalAmount -= (oli.TotalPrice != null) ? oli.TotalPrice : 0;
-        }
+    // 2️⃣ Build map for fast lookup
+    Map<String, AggregateResult> aggMap = new Map<String, AggregateResult>();
+    for (AggregateResult ar : results) {
+        String key = ar.get('year') + '-' + ar.get('month') + '-' + ar.get('carType');
+        aggMap.put(key, ar);
     }
 
-    if (psAccMap.isEmpty()) return;
-
-    // 6. Query existing Planned Sales records in bulk
-    Set<Integer> years = new Set<Integer>();
-    Set<Integer> months = new Set<Integer>();
-    Set<String> carTypes = new Set<String>();
-    for (String key : psAccMap.keySet()) {
-        String[] parts = key.split('-');
-        years.add(Integer.valueOf(parts[0]));
-        months.add(Integer.valueOf(parts[1]));
-        carTypes.add(parts[2]);
-    }
-
-    Map<String, Planned_Sales__c> existingPSMap = new Map<String, Planned_Sales__c>();
-    for (Planned_Sales__c ps : [
-        SELECT Id, Year__c, Month__c, Car_Type__c, Count_of_Cars_Sold__c, Total_Amount_Earned__c
+    // 3️⃣ Query existing Planned Sales
+    List<Planned_Sales__c> plannedSales = [
+        SELECT Id, Year__c, Month__c, Car_Type__c
         FROM Planned_Sales__c
-        WHERE Year__c IN :years AND Month__c IN :months AND Car_Type__c IN :carTypes
-    ]) {
+    ];
+
+    List<Planned_Sales__c> updates = new List<Planned_Sales__c>();
+
+    // 4️⃣ Update or reset values
+    for (Planned_Sales__c ps : plannedSales) {
+
         String key = ps.Year__c + '-' + ps.Month__c + '-' + ps.Car_Type__c;
-        existingPSMap.put(key, ps);
-    }
 
-    List<Planned_Sales__c> plannedSalesToUpsert = new List<Planned_Sales__c>();
-    for (String key : psAccMap.keySet()) {
-        String[] parts = key.split('-');
-        Integer year = Integer.valueOf(parts[0]);
-        Integer month = Integer.valueOf(parts[1]);
-        String carType = parts[2];
-
-        PlannedSalesAccumulator acc = psAccMap.get(key);
-
-        if (existingPSMap.containsKey(key)) {
-            Planned_Sales__c ps = existingPSMap.get(key);
-            ps.Count_of_Cars_Sold__c += acc.CarsSold;
-            ps.Total_Amount_Earned__c += acc.TotalAmount;
-            plannedSalesToUpsert.add(ps);
+        if (aggMap.containsKey(key)) {
+            AggregateResult ar = aggMap.get(key);
+            ps.Count_of_Cars_Sold__c = (Integer) ar.get('carsSold');
+            ps.Total_Amount_Earned__c = (Decimal) ar.get('totalAmount');
         } else {
-            plannedSalesToUpsert.add(new Planned_Sales__c(
-                Year__c = year,
-                Month__c = month,
-                Car_Type__c = carType,
-                Count_of_Cars_Sold__c = acc.CarsSold,
-                Total_Amount_Earned__c = acc.TotalAmount
-            ));
+            ps.Count_of_Cars_Sold__c = 0;
+            ps.Total_Amount_Earned__c = 0;
         }
+
+        updates.add(ps);
     }
 
-    if (!plannedSalesToUpsert.isEmpty()) {
-        try {
-            upsert plannedSalesToUpsert;
-        } catch (DmlException e) {
-            System.debug('Error updating Planned Sales: ' + e.getMessage());
-        }
+    if (!updates.isEmpty()) {
+        update updates;
     }
 }
 
@@ -196,6 +141,7 @@ public class PlannedSalesAccumulator {
         FROM OpportunityLineItem
         WHERE OpportunityId IN :oppIds
     ];
+
     if (olis.isEmpty()) return;
 
     Map<Id, Product2> oppToCar = new Map<Id, Product2>();
@@ -252,7 +198,21 @@ private void validateCarRestrictions(List<Opportunity> opps, Map<Id, Opportunity
             FROM OpportunityLineItem
             WHERE OpportunityId IN :oppIds
         ];
-        if (olis.isEmpty()) return;
+        
+        Set<Id> oppsWithOlis = new Set<Id>();
+for (OpportunityLineItem oli : olis) {
+    oppsWithOlis.add(oli.OpportunityId);
+}
+
+ 
+for (Opportunity opp : opps) {
+    if (!oppsWithOlis.contains(opp.Id)) {
+        opp.Has_Reserved_Cars__c = false;
+    }
+}
+
+ 
+if (olis.isEmpty()) return;
 
         Set<Id> carIds = new Set<Id>();
         Map<Id, Id> oppToCar = new Map<Id, Id>();
@@ -272,7 +232,7 @@ private void validateCarRestrictions(List<Opportunity> opps, Map<Id, Opportunity
             for (Id carId : oppToCar.values()) {
                 Product2 car = cars.get(carId);
                 if (car == null) continue;
-
+   if (car == null) opp.Has_Reserved_Cars__c = false;
                 if ((car.Car_Status__c == 'Reserved' || car.Car_Status__c == 'Sold') &&
                     (oldMap == null || !oldMap.containsKey(opp.Id) || opp.Id != oldMap.get(opp.Id).Id)) {
                     warningCars.add(car.Id);
@@ -280,7 +240,8 @@ private void validateCarRestrictions(List<Opportunity> opps, Map<Id, Opportunity
 
 
 
-                if ((car.Car_Status__c == 'Available') && (opp.Has_Reserved_Cars__c == true)) {
+ 
+                if ((car.Car_Status__c == 'Available') && (opp.Has_Reserved_Cars__c == true) || (opp.OpportunityLineItems.isEmpty())) {
                  opp.Has_Reserved_Cars__c = false;
           
               }
